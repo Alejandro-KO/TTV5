@@ -86,10 +86,10 @@ uint8_t prueba_1[] = "Flag_1";  // Define la cadena que deseas enviar
 uint8_t received_data;
 
 char q1[BUFFER_SIZE] = {0};
-char q2[BUFFER_SIZE] = {0};
+char q2[BUFFER_SIZE] = {'1','2','0'};
 char q3[BUFFER_SIZE] = {0};
-char q4[BUFFER_SIZE] = {0};
-char q5[BUFFER_SIZE] = {0};
+char q4[BUFFER_SIZE] = {'1','.','5','7','0','7'};
+char q5[BUFFER_SIZE] = {'1','.','5','7','0','7'};
 
 uint32_t radianes_a_valor(float radianes) {
     // Ajusta los radianes negativos a su equivalente positivo en el rango de 0 a 2PI
@@ -203,19 +203,19 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-//	  q1_float = atof(q1);
-//	  q4_float = atof(q4);
-//	  q5_float = atof(q5);
-//
-//	  // Conversión de q2 y q3 a int (truncando los valores decimales)
-//	  q2_int = (int)atof(q2);
-//	  q3_int = (int)atof(q3);
+	  q1_float = atof(q1);
+	  q4_float = atof(q4);
+	  q5_float = atof(q5);
 
-	  mover_motorq1_rad(0);
-	  mover_motorq2_mm(150);
-	  mover_motorq3_mm(100);
-	  TIM2->CCR4 = radianes_a_valor(M_PI/2); //q4
-	  TIM2->CCR2 = radianes_a_valor(M_PI/2); //q5
+	  // Conversión de q2 y q3 a int (truncando los valores decimales)
+	  q2_int = (int)atof(q2);
+	  q3_int = (int)atof(q3);
+
+	  mover_motorq1_rad(q1_float);
+	  mover_motorq2_mm(q2_int);
+	  mover_motorq3_mm(q3_int);
+	  TIM2->CCR4 = radianes_a_valor(q4_float); //q4
+	  TIM2->CCR2 = radianes_a_valor(q5_float); //q5
 
     /* USER CODE BEGIN 3 */
   }
@@ -515,10 +515,14 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	FC_Home_q3 = 0;
     }
     if (GPIO_Pin == GPIO_PIN_11) {
-    	Paro_emergencia = 1;
+    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_SET);
     }
     if (GPIO_Pin == GPIO_PIN_13) {
-
+    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
+    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_RESET);
+    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_RESET);
     }
 }
 
@@ -619,7 +623,7 @@ void processBuffer(uint8_t *buffer, uint16_t length){
 
 void A4988_q1(){
 	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(GPIOE, MS0_PIN_q1, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(GPIOB, MS0_PIN_q1, GPIO_PIN_SET);
     HAL_GPIO_WritePin(GPIOB, MS1_PIN_q1, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOB, MS2_PIN_q1, GPIO_PIN_RESET);
 }
