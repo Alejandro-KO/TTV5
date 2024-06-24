@@ -86,7 +86,7 @@ uint8_t prueba_1[] = "Flag_1";  // Define la cadena que deseas enviar
 uint8_t received_data;
 
 char q1[BUFFER_SIZE] = {0};
-char q2[BUFFER_SIZE] = {'1','2','0'};
+char q2[BUFFER_SIZE] = {'1','2','2'};
 char q3[BUFFER_SIZE] = {0};
 char q4[BUFFER_SIZE] = {'1','.','5','7','0','7'};
 char q5[BUFFER_SIZE] = {'1','.','5','7','0','7'};
@@ -94,8 +94,7 @@ char q5[BUFFER_SIZE] = {'1','.','5','7','0','7'};
 uint32_t radianes_a_valor(float radianes) {
     // Ajusta los radianes negativos a su equivalente positivo en el rango de 0 a 2PI
     if (radianes < 0) {
-        radianes += (2*M_PI);
-    	radianes = 0;
+        radianes += M_PI;
     }
 
     // Normaliza el valor de radianes en el rango de 0 a PI
@@ -203,19 +202,26 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-	  q1_float = atof(q1);
-	  q4_float = atof(q4);
-	  q5_float = atof(q5);
+	  if(Paro_emergencia == 1)
+	  {
+		  q1_float = atof(q1);
+		  q4_float = atof(q4);
+		  q5_float = atof(q5);
 
-	  // Conversión de q2 y q3 a int (truncando los valores decimales)
-	  q2_int = (int)atof(q2);
-	  q3_int = (int)atof(q3);
+		  // Conversión de q2 y q3 a int (truncando los valores decimales)
+		  q2_int = (int)atof(q2);
+		  q3_int = (int)atof(q3);
 
-	  mover_motorq1_rad(q1_float);
-	  mover_motorq2_mm(q2_int);
-	  mover_motorq3_mm(q3_int);
-	  TIM2->CCR4 = radianes_a_valor(q4_float); //q4
-	  TIM2->CCR2 = radianes_a_valor(q5_float); //q5
+		  mover_motorq1_rad(q1_float);
+		  mover_motorq2_mm(q2_int);
+		  mover_motorq3_mm(q3_int);
+		  TIM2->CCR4 = radianes_a_valor(q4_float); //q4
+		  TIM2->CCR2 = radianes_a_valor(q5_float); //q5
+	  }
+	  else
+	  {
+
+	  }
 
     /* USER CODE BEGIN 3 */
   }
@@ -515,14 +521,17 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     	FC_Home_q3 = 0;
     }
     if (GPIO_Pin == GPIO_PIN_11) {
-    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_SET);
-    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_SET);
-    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_SET);
-    }
-    if (GPIO_Pin == GPIO_PIN_13) {
     	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
     	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_RESET);
     	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_RESET);
+    	Paro_emergencia = 1;
+    }
+    if (GPIO_Pin == GPIO_PIN_13) {
+
+    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_SET);
+    	Paro_emergencia = 0;
     }
 }
 
@@ -530,12 +539,18 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART3)
     {
+        //HAL_GPIO_WritePin(GPIOE, GPIO_PIN_LED, GPIO_PIN_SET); // Enciende el LED
+        HAL_UART_Transmit(&huart3,&byte,1, 100); // Envía la cadena a través de UART
+
         // Almacenar el byte recibido en el buffer si no es '>'
         if (byte != 62) // 62 es el código ASCII para '>'
         {
+
             if (bufferIndex < BUFFER_SIZE)
             {
+
                 buffer[bufferIndex++] = byte;
+
             }
             else
             {
@@ -562,63 +577,64 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     }
 }
 
-void processBuffer(uint8_t *buffer, uint16_t length){
-	{
-	    if (bufferOverflowFlag)
-	    {
-	        // Manejar el desbordamiento del buffer
-	        // Por ejemplo, enviar un mensaje de error o realizar acciones correctivas
-	        HAL_UART_Transmit(&huart3, (uint8_t *)"Buffer overflow\n", 16, 100);
-	        bufferOverflowFlag = 0; // Restablecer la bandera de desbordamiento
-	        return;
-	    }
+void processBuffer(uint8_t *buffer, uint16_t length)
+{
+    if (bufferOverflowFlag)
+    {
+        // Manejar el desbordamiento del buffer
+        // Por ejemplo, enviar un mensaje de error o realizar acciones correctivas
+        HAL_UART_Transmit(&huart3, (uint8_t *)"Buffer overflow\n", 16, 100);
+        bufferOverflowFlag = 0; // Restablecer la bandera de desbordamiento
+        return;
+    }
 
-	    // Variables para almacenar las partes separadas
-	//    char q1[BUFFER_SIZE] = {0};
-	//    char q2[BUFFER_SIZE] = {0};
-	//    char q3[BUFFER_SIZE] = {0};
-	//    char q4[BUFFER_SIZE] = {0};
+    // Variables para almacenar las partes separadas
+//    char q1[BUFFER_SIZE] = {0};
+//    char q2[BUFFER_SIZE] = {0};
+//    char q3[BUFFER_SIZE] = {0};
+//    char q4[BUFFER_SIZE] = {0};
+
+    // Punteros para la división de la cadena
+    char *ptr = (char *)buffer;
+    char *start = ptr;
+    char *end = strchr(start, 'a');
+
+    if (end != NULL)
+    {
+        strncpy(q1, start, end - start);
+        start = end + 1;
+        end = strchr(start, 'b');
+
+        if (end != NULL)
+        {
+            strncpy(q2, start, end - start);
+            start = end + 1;
+            end = strchr(start, 'c');
+
+            if (end != NULL)
+            {
+                strncpy(q3, start, end - start);
+                start = end + 1;
+                end = strchr(start, 'd');
+
+                if(end != NULL){
+                	 strncpy(q4, start, end - start);
+                	 start = end + 1;
+                	 strcpy(q5, start);
+                }
 
 
-	    // Punteros para la división de la cadena
-	    char *ptr = (char *)buffer;
-	    char *start = ptr;
-	    char *end = strchr(start, 'a');
+            }
+        }
+    }
 
-	    if (end != NULL)
-	    {
-	        strncpy(q1, start, end - start);
-	        start = end + 1;
-	        end = strchr(start, 'b');
 
-	        if (end != NULL)
-	        {
-	            strncpy(q2, start, end - start);
-	            start = end + 1;
-	            end = strchr(start, 'c');
 
-	            if (end != NULL)
-	            {
-	                strncpy(q3, start, end - start);
-	                start = end + 1;
-	                strcpy(q4, start);
-
-	                if (end != NULL){
-	                    strncpy(q4, start, end - start);
-	                    start = end + 1;
-	                    strcpy(q5, start);
-	                }
-	            }
-	        }
-	    }
-
-	    // Enviar cada parte a través de UART para verificar
-	    HAL_UART_Transmit(&huart3, (uint8_t *)q1, strlen(q1), 100); // 0 puntos desfazados
-	    //HAL_UART_Transmit(&huart1, (uint8_t *)q2, strlen(q2), 100); // 5 puntos desfazados
-	    //HAL_UART_Transmit(&huart1, (uint8_t *)q3, strlen(q3), 100); // 2 puntos malos
-	    //HAL_UART_Transmit(&huart1, (uint8_t *)q4, strlen(q4), 100); // Enviar q4 si hay datos
-	    //HAL_UART_Transmit(&huart1, (uint8_t *)q5, strlen(q5), 100); // Enviar q5 si hay datos
-	}
+    // Enviar cada parte a través de UART para verificar
+    HAL_UART_Transmit(&huart3, (uint8_t *)q1, strlen(q1), 100); // 0 puntos desfazados
+    //HAL_UART_Transmit(&huart1, (uint8_t *)q2, strlen(q2), 100); // 5 puntos desfazados
+    //HAL_UART_Transmit(&huart1, (uint8_t *)q3, strlen(q3), 100); // 2 puntos malos
+    //HAL_UART_Transmit(&huart1, (uint8_t *)q4, strlen(q4), 100); // Enviar q4 si hay datos
 }
 
 void A4988_q1(){
@@ -715,17 +731,22 @@ void mover_motorq1_rad(float radianes){
     	}
     }
 
-    else if (diferencia_pasos < 0) {
-        // Movimiento hacia atrás
-    	HAL_GPIO_WritePin(GPIOD, DIR_q1, GPIO_PIN_SET); //Horario
-    	diferencia_pasos = -diferencia_pasos;
-    	for (int i = 0; i < diferencia_pasos ; i++) {
-    		HAL_GPIO_WritePin(GPIOB, STEP_q1, GPIO_PIN_SET);
-    		HAL_Delay(VELOCIDAD);
-    		HAL_GPIO_WritePin(GPIOB, STEP_q1, GPIO_PIN_RESET);
-    		HAL_Delay(VELOCIDAD);
-    	}
+    if(radianes == (2*M_PI))
+    {
+    	radianes = 0;
     }
+
+//    else if (diferencia_pasos < 0) {
+//        // Movimiento hacia atrás
+//    	HAL_GPIO_WritePin(GPIOD, DIR_q1, GPIO_PIN_SET); //Horario
+//    	diferencia_pasos = -diferencia_pasos;
+//    	for (int i = 0; i < diferencia_pasos ; i++) {
+//    		HAL_GPIO_WritePin(GPIOB, STEP_q1, GPIO_PIN_SET);
+//    		HAL_Delay(VELOCIDAD);
+//    		HAL_GPIO_WritePin(GPIOB, STEP_q1, GPIO_PIN_RESET);
+//    		HAL_Delay(VELOCIDAD);
+//    	}
+//    }
 
     paso_actual_q1 = nuevo_paso;
     HAL_Delay(500);
