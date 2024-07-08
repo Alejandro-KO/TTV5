@@ -29,6 +29,15 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct {
+    float Kp;           // Proportional gain
+    float Ki;           // Integral gain
+    float Kd;           // Derivative gain
+    float setpoint;     // Desired or target value
+    float integral;     // Integral term accumulation
+    float prevError;    // Previous error value (for derivative calculation)
+    float prevTime;     // Previous time stamp (for derivative calculation)
+} PID_Controller;
 
 /* USER CODE END PTD */
 
@@ -63,21 +72,33 @@
 #define bufersize 1
 #define BUFFER_SIZE 256
 
-#define DEBOUNCE_THRESHOLD 5
+#define MAX_OUTPUT 50
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+char buffer_1[50];
+char buffer_output_px[50];
+char buffer_measirement[50];
+char buffer_corrected_length_px[50];
+char buffer_corrected_length_py[50];
+char buffer_corrected_length_pz[50];
+char buffer_error[50];
+
+
+
+char buffer_q1[50];
+char buffer_q2[50];
+char buffer_q3[50];
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
- ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc1;
 ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
 DMA_HandleTypeDef hdma_adc2;
 
 TIM_HandleTypeDef htim2;
-TIM_HandleTypeDef htim6;
 
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
@@ -88,9 +109,9 @@ uint8_t buffer[BUFFER_SIZE];
 uint16_t bufferIndex = 0;
 uint8_t bufferOverflowFlag = 0; // Bandera para indicar desbordamiento
 
-uint8_t stringToSend[] = "Hola";  // Define la cadena que deseas enviar
-uint8_t prueba_1[] = "Flag_1";  // Define la cadena que deseas enviar
-uint8_t received_data;
+//uint8_t stringToSend[] = "Hola";  // Define la cadena que deseas enviar
+//uint8_t prueba_1[] = "Flag_1";  // Define la cadena que deseas enviar
+//uint8_t received_data;
 
 char q1[BUFFER_SIZE] = {0};
 char q2[BUFFER_SIZE] = {'1','1','2'};
@@ -118,15 +139,85 @@ uint32_t milimetros_a_pasos(float milimetros) {
     return (uint32_t)(fabs(milimetros) * pasos_por_mm);
 }
 
+void PID_Init(PID_Controller *pid, float Kp, float Ki, float Kd, float setpoint) {
+    pid->Kp = Kp;
+    pid->Ki = Ki;
+    pid->Kd = Kd;
+    pid->setpoint = setpoint;
+    pid->integral = 0;
+    pid->prevError = 0;
+    pid->prevTime = HAL_GetTick();
+}
+
+float clamp(float value, float min, float max) {
+    if (value < min) {
+        return min;
+    } else if (value > max) {
+        return max;
+    } else {
+        return value;
+    }
+}
+
+float PID_Update(PID_Controller *pid, float measurement) {
+    float currentTime = HAL_GetTick();
+    float dt = (currentTime - pid->prevTime) / 5000; // Convertir a segundos
+    float error = pid->setpoint - measurement;
+
+    // Proporcional
+    float P_out = pid->Kp * error;
+
+    // Integral
+    pid->integral += error * dt;
+    float I_out = pid->Ki * pid->integral;
+
+    // Derivativo
+    float derivative = (error - pid->prevError) / dt;
+    float D_out = pid->Kd * derivative;
+
+    // Total Output
+    float output = P_out + I_out + D_out;
+    output = clamp(output, -MAX_OUTPUT, MAX_OUTPUT); // Ajusta MAX_OUTPUT según tu sistema
+
+    // Guardar el error y el tiempo actuales para la próxima iteración
+    pid->prevError = error;
+    pid->prevTime = currentTime;
+
+    float_to_string(error, buffer_error, 3);
+
+
+    sprintf(buffer_1, "Medida error :\r\n");
+    // Transmite la cadena anterior
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+    	        // Transmite valores de control de salida
+    HAL_UART_Transmit(&huart1, (uint8_t*)buffer_error, strlen(buffer_error), HAL_MAX_DELAY);
+    HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+
+
+
+    return output;
+}
+
+PID_Controller pid_px;
+PID_Controller pid_py;
+PID_Controller pid_pz;
+
 volatile uint8_t FC_Home_q2 = 1;// Variable to control motor state
 volatile uint8_t FC_Home_q3 = 1;
 volatile uint8_t Paro_emergencia = 1;
 volatile uint8_t Contador = 0;
 
-volatile uint8_t button_state = 0; // Estado del botón: 0 (no presionado), 1 (presionado)
-volatile uint8_t stable_state = 0;
-volatile uint8_t debounce_counter = 0;
-volatile uint32_t event_count = 0; // Contador de eventos
+//volatile uint8_t button_state = 0; // Estado del botón: 0 (no presionado), 1 (presionado)
+//volatile uint8_t stable_state = 0;
+//volatile uint8_t debounce_counter = 0;
+//volatile uint32_t event_count = 0; // Contador de eventos
+
+volatile float Angulo_q1;
+volatile float Distancia_q2;
+volatile float Distancia_q3;
+volatile float Angulo_q4;
+volatile float Angulo_q5;
 
 volatile int pasos_retroceso = 0;
 
@@ -144,6 +235,44 @@ int q3_int;
 
 uint8_t data[1] = "1"; // El dato a transmitir
 
+// Variables globales
+float posicion_deseada[3] ={55, 35, 80}; // px, py, pz
+float posicion_actual[3] ={0.0, 0.0, 0.0}; // px, py, pz
+float error_anterior[3] ={0.0, 0.0, 0.0};
+float control_signal[3] ={0.0, 0.0, 0.0};
+
+
+//////////////////
+//Declaracion de buferrs
+char buffer_A[50];
+char buffer_px_actual[50];
+char buffer_py_actual[50];
+char buffer_pz_actual[50];
+char buffer_1[50];
+char buffer_error_px[50];
+char buffer_error_py[50];
+char buffer_error_pz[50];
+char buffer_error_px_actual[50];
+char buffer_error_py_actual[50];
+char buffer_error_pz_actual[50];
+char buffer_2[56];
+char buffer_3[50];
+
+char buffer_q1_actual[50];
+char buffer_q2_actual[50];
+char buffer_q3_actual[50];
+
+
+
+
+
+
+////
+double px, py, pz;
+double q_1=0;
+double q_2=0;
+double q_3=0;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -156,7 +285,6 @@ static void MX_TIM2_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_USART3_UART_Init(void);
-static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 void processBuffer(uint8_t *buffer, uint16_t length);
 void A4988_q1();
@@ -168,6 +296,13 @@ void Home_q3(void);
 void mover_motorq1_rad(float radianes);
 void mover_motorq2_mm(float milimetros);
 void mover_motorq3_mm(float milimetros);
+void transmitirFlotante(volatile float valor);
+
+void float_to_string(float value, char* buffer, int precision);
+void cinematica_inversa(double px, double py, double pz, double *q1_out, double *q2_out, double *q3_out);
+void cinematica_directa(double q1, double q2, double q3, double *px, double *py, double *pz);
+void ControlarMotor(double q1, double q2, double q3);
+void LeerAngulosSensor(double *q1, double *q2, double *q3);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -212,7 +347,6 @@ int main(void)
   MX_ADC1_Init();
   MX_ADC2_Init();
   MX_USART3_UART_Init();
-  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);
   HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
@@ -223,46 +357,149 @@ int main(void)
   A4988_q2();
   A4988_q3();
   Home();
+
+
+
+  float setpoint_px=55;
+  float setpoint_py=35;
+  float setpoint_pz=80;
+
+  // Inicializa el controlador PID
+  PID_Init(&pid_px, 1, 0, 0.0011, setpoint_px);
+  PID_Init(&pid_py, 1, 0, 0.0011, setpoint_py);
+  PID_Init(&pid_pz, 1, 0, 0.0011, setpoint_pz);
+
+
+
+  /* USER CODE END 2 */
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+
+  //float measurement = 0; // Longitud medida inicial
+  //float measurement_1 = 0; // Longitud medida inicial
+  //float measurement_2 = 0; // Longitud medida inicial
+
+
+  double q1, q2, q3;
+  double new_px=0, new_py=0, new_pz=0;
+  //uint32_t previousTick = HAL_GetTick();  // Obtiene el tiempo inicial en milisegundos
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
-  {
-    /* USER CODE END WHILE */
+   {
+	  float control_output_px = PID_Update(&pid_px, new_px);
 
-    /* USER CODE BEGIN 3 */
-	if(Paro_emergencia == 1)
-	{
-		q1_float = atof(q1);
-		q4_float = atof(q4);
-		q5_float = atof(q5);
+	  	        float corrected_length_px =  new_px + control_output_px;
+	  	        // Simulación de un proceso que cambia la longitud medida (por ejemplo, movimiento de un actuador)
+	  	        new_px += 0.4; // Simulación de cambio en la longitud medida
 
-		// Conversión de q2 y q3 a int (truncando los valores decimales)
-		q2_int = (int)atof(q2);
-		q3_int = (int)atof(q3);
+	  	        // Conversión de resultados a cadenas para poder enviarlas
 
-		mover_motorq1_rad(q1_float);
-		HAL_Delay(100);
-		mover_motorq2_mm(q2_int);
-		HAL_Delay(100);
-		mover_motorq3_mm(q3_int);
-		HAL_Delay(200);
-		TIM2->CCR4 = radianes_a_valor(q4_float); //q4
-		HAL_Delay(200);
-		TIM2->CCR2 = radianes_a_valor(q5_float); //q5
+	  	        float_to_string(corrected_length_px, buffer_corrected_length_px, 3);
 
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_SET); // Enciende el LED
-		HAL_Delay(1000); // Retardo de 1 segundo (1000 milisegundos)
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, GPIO_PIN_RESET); // Apaga el LED
-		HAL_Delay(1000); // Retardo de 1 segundo (1000 milisegundos)
+	  	        sprintf(buffer_1, "Medida corregida para articulacion px :\r\n");
+	  	        // Transmite la cadena anterior
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+	  	        // Transmite valores de control de salida
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_corrected_length_px, strlen(buffer_corrected_length_px), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
 
-		HAL_UART_Transmit(&huart3, data, 1, 100); // Transmite un byte
-		HAL_Delay(1500); // Retardo de 1 segundo (1000 milisegundos)
-	}
-  }
+	  	        //HAL_Delay(1000); // Ajusta según la velocidad de tu sistema y necesidades de actualización
+
+	  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	  	        float control_output_py = PID_Update(&pid_py, new_py);
+
+	  	        float corrected_length_py = new_py + control_output_py;
+	  	        // Simulación de un proceso que cambia la longitud medida (por ejemplo, movimiento de un actuador)
+	  	        new_py += 0.1; // Simulación de cambio en la longitud medida
+
+	  	        	        // Conversión de resultados a cadenas para poder enviarlas
+
+	  	        float_to_string(corrected_length_py, buffer_corrected_length_py, 3);
+
+	  	        sprintf(buffer_1, "Medida corregida para articulacion py :\r\n");
+	  	        	        // Transmite la cadena anterior
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+	  	        	        // Transmite valores de control de salida
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_corrected_length_py, strlen(buffer_corrected_length_py), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+	  	        //HAL_Delay(1000); // Ajusta según la velocidad de tu sistema y necesidades de actualización
+
+	  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	  	        float control_output_pz = PID_Update(&pid_pz, new_pz);
+
+	  	        float corrected_length_pz = new_pz + control_output_pz;
+	  	        	        // Simulación de un proceso que cambia la longitud medida (por ejemplo, movimiento de un actuador)
+	  	        new_pz += 0.1; // Simulación de cambio en la longitud medida
+
+	  	        	        	        // Conversión de resultados a cadenas para poder enviarlas
+
+	  	        float_to_string(corrected_length_pz, buffer_corrected_length_pz, 3);
+
+	  	        sprintf(buffer_1, "Medida corregida para articulacion pz :\r\n");
+	  	        	        	        // Transmite la cadena anterior
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+	  	        	        	        // Transmite valores de control de salida
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_corrected_length_pz, strlen(buffer_corrected_length_pz), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+
+
+	  //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+	  	        //Cinematica inversa
+	  	        cinematica_inversa(corrected_length_px, corrected_length_py,corrected_length_pz, &q1, &q2, &q3);
+
+	  	        /////////////////////////////////////////////////////////////////////////////////////////////////
+	  	        ///Mover motores aqui tomando los valores q1 q2 q3
+	  	      ControlarMotor(q1,q2,q3);
+	  	        /////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+	  	        sprintf(buffer_1, "Tus valores de tu cinematica q1,q2 y q3:\r\n");
+	  	        	    //Tranmite la cadena anterior
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+
+	  	        	    //Convercion de resultados de cinematica inversa a cadenas para poder enviarlas
+	  	        float_to_string(q1, buffer_q1, 3);
+	  	        float_to_string(q2, buffer_q2, 3);
+	  	        float_to_string(q3, buffer_q3, 3);
+
+
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_q1, strlen(buffer_q1), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_q2, strlen(buffer_q2), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)buffer_q3, strlen(buffer_q3), HAL_MAX_DELAY);
+	  	        HAL_UART_Transmit(&huart1, (uint8_t*)"\r\n", 2, HAL_MAX_DELAY);
+
+	  	        ///Valores de la cinematica directa
+	  	        cinematica_directa(q1, q2, q3, &new_px, &new_py, &new_pz);
+
+	  	       // HAL_Delay(1000);
+
+
+
+
+ 	    }
+   }
   /* USER CODE END 3 */
-}
+
 
 /**
   * @brief System Clock Configuration
@@ -527,44 +764,6 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM6 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM6_Init(void)
-{
-
-  /* USER CODE BEGIN TIM6_Init 0 */
-
-  /* USER CODE END TIM6_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-
-  /* USER CODE BEGIN TIM6_Init 1 */
-
-  /* USER CODE END TIM6_Init 1 */
-  htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 8399;
-  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 999;
-  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM6_Init 2 */
-
-  /* USER CODE END TIM6_Init 2 */
-
-}
-
-/**
   * @brief USART1 Initialization Function
   * @param None
   * @retval None
@@ -768,58 +967,60 @@ static void MX_GPIO_Init(void)
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
     if (GPIO_Pin == GPIO_PIN_7) {
     	FC_Home_q2 = 0;
+    	Distancia_q2 = 210;
     }
     if (GPIO_Pin == GPIO_PIN_9) {
     	FC_Home_q3 = 0;
+    	Distancia_q3 = 0;
     }
     if (GPIO_Pin == GPIO_PIN_11) { //rojo
 //    	HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_3);
-//    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_SET);
-//    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_SET);
-//    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_SET);
+    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_SET);
     	Paro_emergencia = 0;
     }
     if (GPIO_Pin == GPIO_PIN_13) { //verde
 //    	Paro_emergencia = Paro_emergencia + 1;
 //    	HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_3);
-//    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
-//    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_RESET);
-//    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_RESET);
+    	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
+    	HAL_GPIO_WritePin(GPIOD, ENABLE_PIN_q2, GPIO_PIN_RESET);
+    	HAL_GPIO_WritePin(GPIOA, ENABLE_PIN_q3, GPIO_PIN_RESET);
     	Paro_emergencia = 1;
-    	__HAL_TIM_SET_COUNTER(&htim6, 0);
-    	HAL_TIM_Base_Start_IT(&htim6);
+//    	__HAL_TIM_SET_COUNTER(&htim6, 0);
+//    	HAL_TIM_Base_Start_IT(&htim6);
     }
 }
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM6) { // Asegúrate de que este es el timer correcto
-        uint8_t current_state = HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_13); // Leer el pin del botón
-
-        if (current_state == stable_state) {
-            if (debounce_counter < DEBOUNCE_THRESHOLD) {
-                debounce_counter++;
-            } else {
-                if (button_state != current_state) {
-                    button_state = current_state;
-                    event_count++; // Incrementar el contador de eventos
-
-                    // Toggle de los LEDs según el contador de eventos
-                    if (event_count % 3 == 0) {
-                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_3); // Toggle del LED1
-                    }
-                    if (event_count % 5 == 0) {
-                        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_3); // Toggle del LED2
-                    }
-                }
-                // Detener el timer si el estado es estable
-                HAL_TIM_Base_Stop_IT(&htim6);
-            }
-        } else {
-            debounce_counter = 0;
-        }
-        stable_state = current_state;
-    }
-}
+//void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+//    if (htim->Instance == TIM6) { // Asegúrate de que este es el timer correcto
+//        uint8_t current_state = HAL_GPIO_ReadPin(GPIOE, GPIO_PIN_13); // Leer el pin del botón
+//
+//        if (current_state == stable_state) {
+//            if (debounce_counter < DEBOUNCE_THRESHOLD) {
+//                debounce_counter++;
+//            } else {
+//                if (button_state != current_state) {
+//                    button_state = current_state;
+//                    event_count++; // Incrementar el contador de eventos
+//
+//                    // Toggle de los LEDs según el contador de eventos
+//                    if (event_count % 3 == 0) {
+//                        HAL_GPIO_TogglePin(GPIOC, GPIO_PIN_3); // Toggle del LED1
+//                    }
+//                    if (event_count % 5 == 0) {
+//                        HAL_GPIO_TogglePin(GPIOE, GPIO_PIN_3); // Toggle del LED2
+//                    }
+//                }
+//                // Detener el timer si el estado es estable
+//                HAL_TIM_Base_Stop_IT(&htim6);
+//            }
+//        } else {
+//            debounce_counter = 0;
+//        }
+//        stable_state = current_state;
+//    }
+//}
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
@@ -856,6 +1057,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
         }
 
         HAL_UART_Receive_IT(&huart3, &byte, 1);
+
 
 
         // Vuelve a habilitar la recepción por interrupción
@@ -924,6 +1126,16 @@ void processBuffer(uint8_t *buffer, uint16_t length)
 
 }
 
+void transmitirFlotante(volatile float valor) {
+    char buffer[32];
+
+    // Convertir el valor flotante a una cadena de caracteres
+    sprintf(buffer, "%f\r\n", valor);
+
+    // Transmitir la cadena de caracteres usando USART
+    HAL_UART_Transmit(&huart3, (uint8_t*)buffer, strlen(buffer), 100);
+}
+
 void A4988_q1(){
 	HAL_GPIO_WritePin(GPIOE, ENABLE_PIN_q1, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(GPIOB, MS0_PIN_q1, GPIO_PIN_SET);
@@ -950,6 +1162,7 @@ void Home (void){
 	Home_q3();
 	TIM2->CCR2 = radianes_a_valor(M_PI/2); //q5
 	TIM2->CCR4 = radianes_a_valor(M_PI/2); //q4
+
 }
 
 void Home_q2(void){
@@ -972,6 +1185,8 @@ void Home_q2(void){
 		HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_RESET);
 		HAL_Delay(VELOCIDAD);
 		paso_actual_q2--;
+		Distancia_q2 = Distancia_q2 - 0.04;
+		//transmitirFlotante(Distancia_q2);
 	}
 	HAL_Delay(500);
 	FC_Home_q2 = 1;
@@ -996,6 +1211,8 @@ void Home_q3(void){
 		HAL_Delay(VELOCIDAD);
 		HAL_GPIO_WritePin(GPIOD, STEP_q3, GPIO_PIN_RESET);
 		HAL_Delay(VELOCIDAD);
+		Distancia_q3 = Distancia_q3 + 0.04;
+		//transmitirFlotante(Distancia_q3);
 	}
 	HAL_Delay(500);
 	FC_Home_q3 = 1;
@@ -1056,18 +1273,30 @@ void mover_motorq2_mm(float milimetros){
     if (diferencia_pasos != 0) {
         if (diferencia_pasos > 0) {
         	 HAL_GPIO_WritePin(GPIOA, DIR_q2, GPIO_PIN_RESET); //Retroceso
+        	 for (int i = 0; i < diferencia_pasos; i++) {
+        	        	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_SET);
+        	        	HAL_Delay(VELOCIDAD);
+        	        	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_RESET);
+        	        	HAL_Delay(VELOCIDAD);
+        	        	Distancia_q2 = Distancia_q2 + 0.04;
+        	        	//transmitirFlotante(Distancia_q2);
+        	        }
         }
         else {
         	HAL_GPIO_WritePin(GPIOA, DIR_q2, GPIO_PIN_SET); //Avance
             diferencia_pasos = -diferencia_pasos; // Hacer positiva la diferencia para el bucle
+            for (int i = 0; i < diferencia_pasos; i++) {
+                   	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_SET);
+                   	HAL_Delay(VELOCIDAD);
+                   	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_RESET);
+                   	HAL_Delay(VELOCIDAD);
+                   	Distancia_q2 = Distancia_q2 - 0.04;
+                   	//transmitirFlotante(Distancia_q2);
+                   }
         }
 
-        for (int i = 0; i < diferencia_pasos; i++) {
-        	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_SET);
-        	HAL_Delay(VELOCIDAD);
-        	HAL_GPIO_WritePin(GPIOA, STEP_q2, GPIO_PIN_RESET);
-        	HAL_Delay(VELOCIDAD);
-        }
+
+        transmitirFlotante(Distancia_q2);
 
         paso_actual_q2 = pasos;
     }
@@ -1080,8 +1309,8 @@ void mover_motorq3_mm(float milimetros){
 	if (milimetros < 0) {
 		milimetros = 0;
 	}
-	else if (milimetros > 215) {
-		milimetros = 215 ;
+	else if (milimetros > 210) {
+		milimetros = 210 ;
 	}
 
     uint32_t pasos = milimetros_a_pasos(milimetros);
@@ -1095,6 +1324,9 @@ void mover_motorq3_mm(float milimetros){
     		HAL_Delay(VELOCIDAD);
     		HAL_GPIO_WritePin(GPIOD, STEP_q3, GPIO_PIN_RESET);
     		HAL_Delay(VELOCIDAD);
+    		Distancia_q3 = Distancia_q3 + 0.04;
+
+    		//transmitirFlotante(Distancia_q3);
     	}
     }
 
@@ -1106,11 +1338,84 @@ void mover_motorq3_mm(float milimetros){
     		HAL_Delay(VELOCIDAD);
     		HAL_GPIO_WritePin(GPIOD, STEP_q3, GPIO_PIN_RESET);
     		HAL_Delay(VELOCIDAD);
+    		Distancia_q3 = Distancia_q3 - 0.04;
+    		//transmitirFlotante(Distancia_q3);
     	}
     }
 
+    transmitirFlotante(Distancia_q3);
     paso_actual_q3 = nuevo_paso;
     HAL_Delay(500);
+}
+
+void float_to_string(float value, char* buffer, int precision) {
+    int int_part = (int)value;
+    float frac_part = value - int_part;
+    int frac_part_int = (int)(frac_part * pow(10, precision));
+
+    if (value < 0) {
+        *buffer++ = '-';
+        int_part = -int_part;
+        frac_part_int = -frac_part_int;
+    }
+
+    itoa(int_part, buffer, 10);
+    while (*buffer != '\0') buffer++;
+    *buffer++ = '.';
+    itoa(frac_part_int, buffer, 10);
+}
+
+
+
+//Funciones para calcular las cinematicas
+void cinematica_inversa(double px, double py, double pz, double *q1_out, double *q2_out, double *q3_out){
+	 // Calcular q1
+	*q1_out = atan(-px / py) + M_PI;
+    // Calcular q2
+    // Calcular q2
+    *q2_out = px * sin(*q1_out) - py * cos(*q1_out);
+
+    // Asignar pz al parámetro de salida q3
+    *q3_out = pz;
+}
+
+void cinematica_directa(double q1, double q2, double q3, double *px, double *py, double *pz){
+	//calcualar px
+	*px=q2*sin(q1);
+
+	//calcular py
+	*py=-q2*cos(q1);
+
+	// calcualr pz
+
+	*pz=q3;
+
+}
+
+//void LeerAngulosSensor(double *q1, double *q2, double *q3) {
+//    // Código para leer los ángulos desde un sensor
+//    *q1 = 0.0; // Valor de ejemplo para q1
+//    *q2 = 0.0; // Valor de ejemplo para q2
+//    *q3 = 0.0; // Valor de ejemplo para q3
+//}
+
+
+
+
+void ControlarMotor(double q1, double q2, double q3) {
+
+	char buffer_1[50];
+
+	sprintf(buffer_1, "Moviendo motores :\r\n");
+	//Tranmite la cadena anterior
+	HAL_UART_Transmit(&huart3, (uint8_t*)buffer_1, strlen(buffer_1), HAL_MAX_DELAY);
+
+	mover_motorq1_rad(q1);
+	mover_motorq2_mm(q2);
+	mover_motorq3_mm(q3);
+	TIM2->CCR4 = radianes_a_valor(M_PI/2); //q4
+	TIM2->CCR2 = radianes_a_valor(M_PI/2); //q5
+
 }
 
 /* USER CODE END 4 */
